@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>RoadGuard AI</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#080f1e;
+  --surface:rgba(255,255,255,0.04);
+  --border:rgba(255,255,255,0.08);
+  --blue:#4F8CFF;
+  --green:#22C55E;
+  --orange:#F59E0B;
+  --red:#EF4444;
+  --text:#F1F5F9;
+  --muted:#64748B;
+  --panel:rgba(13,20,38,0.92);
+}
+html,body{
+  height:100%;
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;
+  overflow:hidden;
+}
+
+/* ── LAYOUT ── */
+#app{
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  grid-template-columns:1fr 320px;
+  grid-template-areas:
+    "header header"
+    "feed    sidebar"
+    "history history";
+  height:100vh;
+  gap:0;
+}
+
+/* ── HEADER ── */
+#header{
+  grid-area:header;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:14px 24px;
+  border-bottom:1px solid var(--border);
+  background:rgba(8,15,30,0.95);
+  backdrop-filter:blur(12px);
+  z-index:10;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand-logo{
+  width:36px;height:36px;border-radius:9px;
+  background:var(--blue);
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;font-weight:800;color:#fff;letter-spacing:-1px;
+  flex-shrink:0;
+}
+.brand-text h1{
+  font-size:17px;font-weight:700;letter-spacing:-0.02em;
+  background:linear-gradient(90deg,#fff 50%,var(--blue));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.brand-text p{font-size:10px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-top:1px;}
+.header-right{display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+#sys-status{
+  display:flex;align-items:center;gap:7px;
+  font-size:11px;font-weight:600;
+  padding:5px 12px;border-radius:20px;
+  background:rgba(34,197,94,0.1);
+  color:var(--green);
+  border:1px solid rgba(34,197,94,0.2);
+  letter-spacing:0.06em;
+}
+#sys-status.loading{background:rgba(79,140,255,0.1);color:var(--blue);border-color:rgba(79,140,255,0.2);}
+#sys-status.error{background:rgba(239,68,68,0.1);color:var(--red);border-color:rgba(239,68,68,0.2);}
+.status-dot{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--green);
+  animation:blink 2s infinite;
+  flex-shrink:0;
+}
+.status-dot.loading{background:var(--blue);}
+.status-dot.error{background:var(--red);animation:none;}
+#clock{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;letter-spacing:0.04em;}
+
+/* ── CAMERA FEED (main area) ── */
+#feed{
+  grid-area:feed;
+  position:relative;
+  background:#000;
+  overflow:hidden;
+}
+#video{
+  width:100%;height:100%;
+  object-fit:cover;
+  display:block;
+  transform:scaleX(-1); /* mirror for front cam feel */
+}
+#canvas-hidden{display:none;}
+
+/* scan overlay */
+#scan-overlay{
+  position:absolute;inset:0;pointer-events:none;
+  opacity:0;transition:opacity 0.5s;
+}
+#scan-overlay.active{opacity:1;}
+.scan-line{
+  position:absolute;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent 0%,var(--blue) 40%,rgba(79,140,255,0.8) 50%,var(--blue) 60%,transparent 100%);
+  animation:scandown 2.4s linear infinite;
+}
+.corner{position:absolute;width:20px;height:20px;border-color:var(--blue);border-style:solid;opacity:0.7;}
+.c-tl{top:16px;left:16px;border-width:2px 0 0 2px;border-radius:2px 0 0 0;}
+.c-tr{top:16px;right:16px;border-width:2px 2px 0 0;border-radius:0 2px 0 0;}
+.c-bl{bottom:16px;left:16px;border-width:0 0 2px 2px;border-radius:0 0 0 2px;}
+.c-br{bottom:16px;right:16px;border-width:0 2px 2px 0;border-radius:0 0 2px 0;}
+
+/* crack alert overlay */
+#crack-overlay{
+  position:absolute;inset:0;pointer-events:none;
+  border:3px solid var(--red);
+  border-radius:0;
+  opacity:0;
+  animation:none;
+  box-shadow:inset 0 0 60px rgba(239,68,68,0.2),0 0 60px rgba(239,68,68,0.15);
+  transition:opacity 0.3s;
+}
+#crack-overlay.active{opacity:1;animation:crackPulse 1.5s ease-in-out infinite;}
+
+/* init screen */
+#init-screen{
+  position:absolute;inset:0;
+  background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;
+  z-index:20;
+}
+.init-icon{font-size:48px;animation:float 3s ease-in-out infinite;}
+.init-title{font-size:24px;font-weight:700;letter-spacing:-0.02em;}
+.init-sub{font-size:13px;color:var(--muted);text-align:center;max-width:280px;line-height:1.6;}
+#init-progress{
+  width:240px;height:3px;
+  background:rgba(255,255,255,0.08);
+  border-radius:2px;overflow:hidden;
+}
+#init-bar{
+  height:100%;width:0%;
+  background:var(--blue);
+  border-radius:2px;
+  transition:width 0.4s ease;
+}
+#init-step{font-size:12px;color:var(--blue);letter-spacing:0.04em;}
+
+/* ── SIDEBAR ── */
+#sidebar{
+  grid-area:sidebar;
+  background:var(--panel);
+  border-left:1px solid var(--border);
+  overflow-y:auto;
+  display:flex;
+  flex-direction:column;
+  gap:0;
+}
+.sidebar-section{
+  padding:16px 18px;
+  border-bottom:1px solid var(--border);
+}
+.sec-label{
+  font-size:9px;font-weight:700;letter-spacing:0.14em;
+  text-transform:uppercase;color:var(--muted);
+  margin-bottom:12px;
+}
+
+/* prediction card */
+.pred-big{
+  display:flex;flex-direction:column;gap:6px;
+  padding:14px;
+  background:rgba(255,255,255,0.03);
+  border-radius:12px;
+  border:1px solid var(--border);
+}
+.pred-class{
+  font-size:22px;font-weight:700;
+  letter-spacing:-0.02em;
+  transition:color 0.3s;
+}
+.pred-class.crack{color:var(--red);}
+.pred-class.nocrack{color:var(--green);}
+.pred-class.waiting{color:var(--muted);}
+.pred-conf{font-size:13px;color:var(--muted);}
+.conf-bar{height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin-top:4px;}
+.conf-fill{
+  height:100%;border-radius:2px;
+  background:var(--green);
+  transition:width 0.3s ease,background 0.3s;
+}
+.conf-fill.crack{background:var(--red);}
+
+/* all predictions */
+.pred-rows{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+.pred-row{display:flex;flex-direction:column;gap:3px;}
+.pred-row-header{display:flex;justify-content:space-between;align-items:center;}
+.pr-label{font-size:12px;color:var(--muted);}
+.pr-pct{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;}
+.pr-bar{height:3px;background:rgba(255,255,255,0.06);border-radius:2px;}
+.pr-fill{height:100%;border-radius:2px;transition:width 0.3s,background 0.3s;}
+
+/* info rows */
+.info-row{
+  display:flex;justify-content:space-between;align-items:flex-start;
+  padding:8px 0;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+  font-size:12px;
+  gap:8px;
+}
+.info-row:last-child{border-bottom:none;}
+.ir-key{color:var(--muted);flex-shrink:0;}
+.ir-val{color:var(--text);text-align:right;font-weight:500;font-variant-numeric:tabular-nums;}
+.ir-val.good{color:var(--green);}
+.ir-val.bad{color:var(--red);}
+
+/* session counter */
+.counters{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.counter-card{
+  background:rgba(255,255,255,0.03);border:1px solid var(--border);
+  border-radius:10px;padding:12px;
+  display:flex;flex-direction:column;gap:2px;
+}
+.ct-num{font-size:22px;font-weight:700;letter-spacing:-0.02em;}
+.ct-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;}
+
+/* ── HISTORY ── */
+#history{
+  grid-area:history;
+  background:var(--panel);
+  border-top:1px solid var(--border);
+  height:160px;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.hist-header{
+  padding:10px 20px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;
+}
+.hist-title{font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);}
+#hist-count{font-size:11px;color:var(--blue);font-weight:600;}
+#hist-list{
+  flex:1;overflow-y:auto;overflow-x:hidden;
+  display:flex;flex-direction:column;
+}
+.hist-empty{
+  display:flex;align-items:center;justify-content:center;
+  height:100%;
+  font-size:12px;color:var(--muted);
+  font-style:italic;
+}
+.hist-item{
+  display:grid;
+  grid-template-columns:auto 1fr auto auto;
+  gap:12px;
+  padding:9px 20px;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+  align-items:center;
+  font-size:12px;
+  animation:slideIn 0.3s ease;
+}
+.hi-badge{
+  font-size:10px;font-weight:700;padding:2px 8px;
+  border-radius:4px;letter-spacing:0.06em;
+  flex-shrink:0;
+}
+.hi-crack{background:rgba(239,68,68,0.15);color:var(--red);}
+.hi-ok{background:rgba(34,197,94,0.1);color:var(--green);}
+.hi-coords{color:var(--muted);}
+.hi-conf{font-weight:600;font-variant-numeric:tabular-nums;}
+.hi-conf.crack{color:var(--red);}
+.hi-conf.ok{color:var(--green);}
+.hi-time{color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;}
+
+/* ── ALERT CARD (over feed) ── */
+#alert-card{
+  position:absolute;
+  top:16px;left:16px;
+  background:rgba(8,15,30,0.9);
+  border:1px solid rgba(239,68,68,0.5);
+  border-radius:14px;
+  padding:16px 20px;
+  max-width:300px;
+  backdrop-filter:blur(16px);
+  display:none;
+  animation:alertIn 0.3s ease;
+  z-index:5;
+}
+#alert-card.visible{display:block;}
+.alert-head{
+  font-size:11px;font-weight:700;
+  letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--red);
+  display:flex;align-items:center;gap:7px;
+  margin-bottom:12px;
+}
+.alert-blink{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--red);
+  animation:blink 1s infinite;
+}
+.alert-rows{display:flex;flex-direction:column;gap:6px;}
+.alert-row{display:flex;justify-content:space-between;gap:12px;font-size:12px;}
+.ar-key{color:rgba(255,255,255,0.5);}
+.ar-val{color:#fff;font-weight:600;font-variant-numeric:tabular-nums;}
+.alert-conf-bar{height:3px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:8px;}
+.alert-conf-fill{height:100%;border-radius:2px;background:var(--red);transition:width 0.4s ease;}
+
+/* ── ANIMATIONS ── */
+@keyframes scandown{from{top:-2px;}to{top:100%;}}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.3;}}
+@keyframes crackPulse{
+  0%,100%{box-shadow:inset 0 0 40px rgba(239,68,68,0.15),0 0 40px rgba(239,68,68,0.1);}
+  50%{box-shadow:inset 0 0 80px rgba(239,68,68,0.3),0 0 80px rgba(239,68,68,0.2);}
+}
+@keyframes alertIn{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:translateY(0);}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-6px);}to{opacity:1;transform:translateX(0);}}
+@keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);}}
+
+/* ── RESPONSIVE ── */
+/* Tablet */
+@media(max-width:900px){
+  #app{
+    grid-template-columns:1fr;
+    grid-template-rows:auto 1fr auto auto;
+    grid-template-areas:
+      "header"
+      "feed"
+      "sidebar"
+      "history";
+  }
+  #feed{min-height:50vh;}
+  #sidebar{border-left:none;border-top:1px solid var(--border);height:auto;overflow:visible;}
+  #sidebar .sidebar-section{padding:12px 16px;}
+  #history{height:200px;}
+}
+/* Mobile */
+@media(max-width:480px){
+  #app{grid-template-rows:auto 1fr auto auto;}
+  #feed{min-height:45vh;}
+  .brand-text h1{font-size:15px;}
+  #alert-card{max-width:calc(100% - 32px);}
+  .hist-item{grid-template-columns:auto 1fr auto;gap:8px;}
+  .hi-coords{display:none;}
+  #history{height:180px;}
+  .init-title{font-size:20px;}
+}
+/* Large screens / TVs */
+@media(min-width:1400px){
+  #sidebar{width:380px;}
+  .pred-class{font-size:28px;}
+}
+
+/* scrollbar */
+::-webkit-scrollbar{width:3px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HEADER -->
+  <header id="header">
+    <div class="brand">
+      <div class="brand-logo">R</div>
+      <div class="brand-text">
+        <h1>ROADGUARD AI</h1>
+        <p>Real-Time Infrastructure Monitoring</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div id="sys-status" class="loading">
+        <span class="status-dot loading" id="status-dot"></span>
+        <span id="status-text">Initializing…</span>
+      </div>
+      <div id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- CAMERA FEED -->
+  <div id="feed">
+    <!-- hidden canvas for model prediction -->
+    <canvas id="canvas-hidden"></canvas>
+
+    <!-- video element -->
+    <video id="video" autoplay playsinline muted></video>
+
+    <!-- scan overlay -->
+    <div id="scan-overlay">
+      <div class="scan-line"></div>
+      <div class="corner c-tl"></div>
+      <div class="corner c-tr"></div>
+      <div class="corner c-bl"></div>
+      <div class="corner c-br"></div>
+    </div>
+
+    <!-- crack border overlay -->
+    <div id="crack-overlay"></div>
+
+    <!-- alert card -->
+    <div id="alert-card">
+      <div class="alert-head">
+        <span class="alert-blink"></span>
+        CRACK DETECTED
+      </div>
+      <div class="alert-rows">
+        <div class="alert-row">
+          <span class="ar-key">Confidence</span>
+          <span class="ar-val" id="ac-conf">—</span>
+        </div>
+        <div class="alert-row">
+          <span class="ar-key">Location</span>
+          <span class="ar-val" id="ac-loc">—</span>
+        </div>
+        <div class="alert-row">
+          <span class="ar-key">Detected</span>
+          <span class="ar-val" id="ac-time">—</span>
+        </div>
+      </div>
+      <div class="alert-conf-bar">
+        <div class="alert-conf-fill" id="ac-fill" style="width:0%"></div>
+      </div>
+    </div>
+
+    <!-- init screen -->
+    <div id="init-screen">
+      <div class="init-icon">🛣️</div>
+      <div class="init-title">RoadGuard AI</div>
+      <div class="init-sub" id="init-sub">Requesting permissions and loading AI model…</div>
+      <div id="init-progress"><div id="init-bar"></div></div>
+      <div id="init-step">Starting up</div>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+
+    <!-- Current prediction -->
+    <div class="sidebar-section">
+      <div class="sec-label">Live Prediction</div>
+      <div class="pred-big">
+        <div class="pred-class waiting" id="pred-class">Waiting…</div>
+        <div class="pred-conf" id="pred-conf">Confidence: —</div>
+        <div class="conf-bar"><div class="conf-fill" id="conf-fill" style="width:0%"></div></div>
+      </div>
+      <div class="pred-rows" id="pred-rows" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Location -->
+    <div class="sidebar-section">
+      <div class="sec-label">Location</div>
+      <div class="info-row">
+        <span class="ir-key">Latitude</span>
+        <span class="ir-val" id="loc-lat">Acquiring…</span>
+      </div>
+      <div class="info-row">
+        <span class="ir-key">Longitude</span>
+        <span class="ir-val" id="loc-lng">Acquiring…</span>
+      </div>
+      <div class="info-row">
+        <span class="ir-key">Accuracy</span>
+        <span class="ir-val" id="loc-acc">—</span>
+      </div>
+      <div class="info-row">
+        <span class="ir-key">GPS Status</span>
+        <span class="ir-val" id="loc-status" style="color:var(--muted)">Requesting…</span>
+      </div>
+    </div>
+
+    <!-- Surface status -->
+    <div class="sidebar-section">
+      <div class="sec-label">Surface Status</div>
+      <div class="info-row">
+        <span class="ir-key">Current Surface</span>
+        <span class="ir-val good" id="surf-status">No Damage Detected</span>
+      </div>
+      <div class="info-row">
+        <span class="ir-key">Threshold</span>
+        <span class="ir-val">85% confidence</span>
+      </div>
+      <div class="info-row">
+        <span class="ir-key">Last Scan</span>
+        <span class="ir-val" id="last-scan">—</span>
+      </div>
+    </div>
+
+    <!-- Session -->
+    <div class="sidebar-section">
+      <div class="sec-label">Session</div>
+      <div class="counters">
+        <div class="counter-card">
+          <div class="ct-num" id="ct-scans">0</div>
+          <div class="ct-label">Scans</div>
+        </div>
+        <div class="counter-card">
+          <div class="ct-num" id="ct-cracks" style="color:var(--red)">0</div>
+          <div class="ct-label">Cracks Found</div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- HISTORY -->
+  <div id="history">
+    <div class="hist-header">
+      <span class="hist-title">Detection History — This Session</span>
+      <span id="hist-count">0 events</span>
+    </div>
+    <div id="hist-list">
+      <div class="hist-empty" id="hist-empty">No detections yet. Monitoring active.</div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<script>
+'use strict';
+
+// ── CONFIG ────────────────────────────────────────────────────
+const MODEL_URL = 'https://teachablemachine.withgoogle.com/models/JILKj4N_4/';
+const CRACK_THRESHOLD = 0.85; // 85%
+const PREDICT_INTERVAL_MS = 400; // predict every 400ms
+const CRACK_COOLDOWN_MS = 5000; // min 5s between crack events logged
+
+// ── STATE ─────────────────────────────────────────────────────
+let model = null;
+let videoStream = null;
+let predicting = false;
+let sessionScans = 0;
+let sessionCracks = 0;
+let historyItems = [];
+let lastCrackTime = 0;
+let currentLat = null;
+let currentLng = null;
+let locationAccuracy = null;
+let classNames = [];
+let predRowEls = [];
+
+// ── ELEMENTS ──────────────────────────────────────────────────
+const video       = document.getElementById('video');
+const canvasHid   = document.getElementById('canvas-hidden');
+const initScreen  = document.getElementById('init-screen');
+const initBar     = document.getElementById('init-bar');
+const initStep    = document.getElementById('init-step');
+const initSub     = document.getElementById('init-sub');
+const sysStatus   = document.getElementById('sys-status');
+const statusDot   = document.getElementById('status-dot');
+const statusText  = document.getElementById('status-text');
+const scanOverlay = document.getElementById('scan-overlay');
+const crackOverlay= document.getElementById('crack-overlay');
+const alertCard   = document.getElementById('alert-card');
+const predClass   = document.getElementById('pred-class');
+const predConf    = document.getElementById('pred-conf');
+const confFill    = document.getElementById('conf-fill');
+const predRows    = document.getElementById('pred-rows');
+const locLat      = document.getElementById('loc-lat');
+const locLng      = document.getElementById('loc-lng');
+const locAcc      = document.getElementById('loc-acc');
+const locStatus   = document.getElementById('loc-status');
+const surfStatus  = document.getElementById('surf-status');
+const lastScan    = document.getElementById('last-scan');
+const ctScans     = document.getElementById('ct-scans');
+const ctCracks    = document.getElementById('ct-cracks');
+const histList    = document.getElementById('hist-list');
+const histEmpty   = document.getElementById('hist-empty');
+const histCount   = document.getElementById('hist-count');
+const acConf      = document.getElementById('ac-conf');
+const acLoc       = document.getElementById('ac-loc');
+const acTime      = document.getElementById('ac-time');
+const acFill      = document.getElementById('ac-fill');
+
+// ── CLOCK ─────────────────────────────────────────────────────
+function nowStr() {
+  return new Date().toLocaleTimeString('en-IN', { hour12: false });
+}
+setInterval(() => {
+  document.getElementById('clock').textContent = nowStr();
+}, 1000);
+document.getElementById('clock').textContent = nowStr();
+
+// ── PROGRESS ─────────────────────────────────────────────────
+function setProgress(pct, step) {
+  initBar.style.width = pct + '%';
+  initStep.textContent = step;
+}
+
+// ── STATUS BAR ────────────────────────────────────────────────
+function setStatus(state, msg) {
+  sysStatus.className = state === 'ok' ? '' : state === 'loading' ? 'loading' : 'error';
+  statusDot.className = 'status-dot' + (state === 'ok' ? '' : state === 'loading' ? ' loading' : ' error');
+  statusText.textContent = msg;
+  // re-add id attributes (className wipes them)
+  sysStatus.id = 'sys-status';
+  statusDot.id = 'status-dot';
+}
+
+// ── LOCATION ──────────────────────────────────────────────────
+function startLocation() {
+  if (!('geolocation' in navigator)) {
+    locStatus.textContent = 'Not supported';
+    locLat.textContent = 'Unavailable';
+    locLng.textContent = 'Unavailable';
+    return;
+  }
+  navigator.geolocation.watchPosition(
+    pos => {
+      currentLat = pos.coords.latitude;
+      currentLng = pos.coords.longitude;
+      locationAccuracy = pos.coords.accuracy;
+      locLat.textContent = currentLat.toFixed(6) + '°';
+      locLng.textContent = currentLng.toFixed(6) + '°';
+      locAcc.textContent = '±' + Math.round(locationAccuracy) + 'm';
+      locStatus.textContent = '✓ Active';
+      locStatus.style.color = 'var(--green)';
+    },
+    err => {
+      locStatus.textContent = 'Denied / unavailable';
+      locStatus.style.color = 'var(--orange)';
+      locLat.textContent = '—';
+      locLng.textContent = '—';
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+// ── CAMERA ───────────────────────────────────────────────────
+async function startCamera() {
+  // Try environment (rear) first for phones on road, fall back to user
+  const constraints = [
+    { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+    { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } },
+    { video: true }
+  ];
+  for (const c of constraints) {
+    try {
+      videoStream = await navigator.mediaDevices.getUserMedia(c);
+      video.srcObject = videoStream;
+      await new Promise(res => video.onloadedmetadata = res);
+      await video.play();
+      return true;
+    } catch(e) { /* try next */ }
+  }
+  throw new Error('Camera access denied or unavailable');
+}
+
+// ── MODEL ────────────────────────────────────────────────────
+async function loadModel() {
+  model = await tmImage.load(MODEL_URL + 'model.json', MODEL_URL + 'metadata.json');
+  classNames = [];
+  for (let i = 0; i < model.getTotalClasses(); i++) {
+    classNames.push(model.getClassLabels ? model.getClassLabels()[i] : 'Class ' + i);
+  }
+
+  // Build sidebar prediction rows
+  predRows.innerHTML = '';
+  predRowEls = [];
+  classNames.forEach((name, i) => {
+    const isCrack = name.toLowerCase().includes('crack') && !name.toLowerCase().includes('no');
+    const color = isCrack ? 'var(--red)' : 'var(--green)';
+    const div = document.createElement('div');
+    div.className = 'pred-row';
+    div.innerHTML = `
+      <div class="pred-row-header">
+        <span class="pr-label">${name}</span>
+        <span class="pr-pct" id="pct-${i}" style="color:${color}">0.0%</span>
+      </div>
+      <div class="pr-bar"><div class="pr-fill" id="fill-${i}" style="width:0%;background:${color};"></div></div>
+    `;
+    predRows.appendChild(div);
+    predRowEls.push({
+      pct: div.querySelector(`#pct-${i}`),
+      fill: div.querySelector(`#fill-${i}`)
+    });
+  });
+}
+
+// ── PREDICT LOOP ─────────────────────────────────────────────
+async function predict() {
+  if (!model || !predicting) return;
+
+  // Draw current video frame to hidden canvas
+  const w = video.videoWidth || 320;
+  const h = video.videoHeight || 240;
+  canvasHid.width = w;
+  canvasHid.height = h;
+  const ctx = canvasHid.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+
+  const preds = await model.predict(canvasHid);
+  sessionScans++;
+  ctScans.textContent = sessionScans;
+  lastScan.textContent = nowStr();
+
+  // Find crack class
+  let crackProb = 0, nocrackProb = 0;
+  let topClass = '', topProb = 0;
+
+  preds.forEach((p, i) => {
+    const n = p.className.toLowerCase();
+    const isCrack = n.includes('crack') && !n.includes('no');
+    if (isCrack) crackProb = p.probability;
+    else nocrackProb = p.probability;
+
+    if (p.probability > topProb) { topProb = p.probability; topClass = p.className; }
+
+    const pct = (p.probability * 100).toFixed(1);
+    if (predRowEls[i]) {
+      predRowEls[i].pct.textContent = pct + '%';
+      predRowEls[i].fill.style.width = pct + '%';
+    }
+  });
+
+  // Update main prediction display
+  const iscrack = crackProb >= CRACK_THRESHOLD;
+  const displayConf = Math.round(crackProb > nocrackProb ? crackProb * 100 : nocrackProb * 100);
+  const displayClass = crackProb > nocrackProb
+    ? (preds.find(p => p.className.toLowerCase().includes('crack') && !p.className.toLowerCase().includes('no'))?.className || 'Crack')
+    : (preds.find(p => !p.className.toLowerCase().includes('no crack') ? p.className.toLowerCase().includes('no') : true)?.className || 'No Crack');
+
+  predClass.textContent = displayClass;
+  predClass.className = 'pred-class ' + (crackProb > nocrackProb ? 'crack' : 'nocrack');
+  predConf.textContent = 'Confidence: ' + (crackProb > nocrackProb ? Math.round(crackProb * 100) : Math.round(nocrackProb * 100)) + '%';
+  confFill.style.width = (crackProb > nocrackProb ? crackProb : nocrackProb) * 100 + '%';
+  confFill.className = 'conf-fill' + (crackProb > nocrackProb ? ' crack' : '');
+
+  if (iscrack) {
+    const conf = Math.round(crackProb * 100);
+    // Show alert overlay
+    crackOverlay.classList.add('active');
+    alertCard.classList.add('visible');
+    surfStatus.textContent = 'CRACK DETECTED';
+    surfStatus.className = 'ir-val bad';
+
+    // Update alert card
+    const latStr = currentLat !== null ? currentLat.toFixed(4) : '—';
+    const lngStr = currentLng !== null ? currentLng.toFixed(4) : '—';
+    acConf.textContent = conf + '%';
+    acLoc.textContent = latStr + ', ' + lngStr;
+    acTime.textContent = nowStr();
+    acFill.style.width = conf + '%';
+
+    // Log event (with cooldown)
+    const now = Date.now();
+    if (now - lastCrackTime > CRACK_COOLDOWN_MS) {
+      lastCrackTime = now;
+      sessionCracks++;
+      ctCracks.textContent = sessionCracks;
+      addHistory('crack', conf, latStr, lngStr, nowStr());
+      sendNotification(conf, latStr, lngStr);
+    }
+  } else {
+    crackOverlay.classList.remove('active');
+    alertCard.classList.remove('visible');
+    surfStatus.textContent = 'No Damage Detected';
+    surfStatus.className = 'ir-val good';
+  }
+
+  if (predicting) setTimeout(predict, PREDICT_INTERVAL_MS);
+}
+
+// ── HISTORY ──────────────────────────────────────────────────
+function addHistory(type, conf, lat, lng, ts) {
+  histEmpty.style.display = 'none';
+  const item = document.createElement('div');
+  item.className = 'hist-item';
+  item.innerHTML = `
+    <span class="hi-badge hi-crack">CRACK</span>
+    <span class="hi-coords">${lat}, ${lng}</span>
+    <span class="hi-conf crack">${conf}%</span>
+    <span class="hi-time">${ts}</span>
+  `;
+  histList.insertBefore(item, histList.children[1] || null);
+  historyItems.push({ type, conf, lat, lng, ts });
+  histCount.textContent = historyItems.length + (historyItems.length === 1 ? ' event' : ' events');
+}
+
+// ── NOTIFICATIONS ────────────────────────────────────────────
+function sendNotification(conf, lat, lng) {
+  if (!('Notification' in window)) return;
+  const go = () => {
+    new Notification('RoadGuard AI Alert', {
+      body: `Road crack detected.\nConfidence: ${conf}%\nLocation: ${lat}, ${lng}\nImmediate inspection recommended.`,
+      tag: 'roadguard-' + Date.now(),
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" fill="%23EF4444"/><text x="32" y="42" text-anchor="middle" fill="white" font-size="32" font-weight="800" font-family="sans-serif">!</text></svg>'
+    });
+  };
+  if (Notification.permission === 'granted') { go(); return; }
+  if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then(p => { if (p === 'granted') go(); });
+  }
+}
+
+// ── BOOT SEQUENCE ─────────────────────────────────────────────
+async function boot() {
+  // Step 1: Notifications
+  setProgress(5, 'Requesting notification permission…');
+  if ('Notification' in window && Notification.permission === 'default') {
+    try { await Notification.requestPermission(); } catch(e) {}
+  }
+
+  // Step 2: Camera
+  setProgress(20, 'Requesting camera access…');
+  initSub.textContent = 'Please allow camera access when prompted.';
+  try {
+    await startCamera();
+  } catch(e) {
+    setProgress(20, 'Camera permission denied');
+    initSub.textContent = 'Camera access is required. Please allow camera and refresh.';
+    setStatus('error', 'Camera Denied');
+    return;
+  }
+  setProgress(45, 'Camera active');
+
+  // Step 3: Location
+  setProgress(50, 'Requesting GPS location…');
+  initSub.textContent = 'Please allow location access when prompted.';
+  startLocation();
+  await new Promise(r => setTimeout(r, 800)); // small pause
+
+  // Step 4: Load model
+  setProgress(60, 'Loading AI model…');
+  initSub.textContent = 'Downloading Teachable Machine model…';
+  try {
+    await loadModel();
+  } catch(e) {
+    setProgress(60, 'Model load failed: ' + e.message);
+    initSub.textContent = 'Could not load AI model. Check internet connection and refresh.';
+    setStatus('error', 'Model Error');
+    return;
+  }
+  setProgress(95, 'Starting prediction engine…');
+  await new Promise(r => setTimeout(r, 400));
+
+  // Step 5: Go!
+  setProgress(100, 'Monitoring active');
+  await new Promise(r => setTimeout(r, 300));
+
+  initScreen.style.transition = 'opacity 0.5s';
+  initScreen.style.opacity = '0';
+  setTimeout(() => { initScreen.style.display = 'none'; }, 500);
+
+  scanOverlay.classList.add('active');
+  setStatus('ok', 'Monitoring Active');
+  statusDot.style.background = 'var(--green)';
+
+  predicting = true;
+  predict();
+}
+
+boot();
+</script>
+</body>
+</html>
