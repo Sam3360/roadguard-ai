@@ -35,7 +35,9 @@ The goal is to enable proactive road maintenance, improve public safety, and red
 * System status monitoring
 * Detection history log
 
-### 📱 Progressive Web App (PWA)
+### 📱 Progressive Web App (PWA) [UNDER-DEVELOPMENT]
+
+## [![DOWNLOAD](https://img.shields.io/badge/🛣️_CURRENT_PROJECT-RoadGuard_AI-0EA5E9?style=for-the-badge)](https://sam3360.github.io/roadguard-ai_DOWNLOAD/)
 
 * Installable on desktop and mobile devices
 * Fast and lightweight
@@ -129,6 +131,7 @@ Project Lead • AI Development • Frontend Development
 
 ### [@justbored0812](https://github.com/justbored0812)
 Research • Testing • Development Support
+
 ---
 
 ### Monitor. Detect. Alert.
