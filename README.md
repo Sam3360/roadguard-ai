@@ -124,14 +124,11 @@ RoadGuard AI is a prototype research and development project intended to demonst
 
 Developed as an innovation project focused on applying Artificial Intelligence to improve road infrastructure monitoring and public safety.
 
-## 👥 Contributors
-
-### @Sam3360
+### [@Sam3360](https://github.com/Sam3360)
 Project Lead • AI Development • Frontend Development
 
-### @justbored0812
+### [@justbored0812](https://github.com/justbored0812)
 Research • Testing • Development Support
-
 ---
 
 ### Monitor. Detect. Alert.
